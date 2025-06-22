@@ -178,14 +178,15 @@ vdec:
 pinc:
     incl %edx
     cmpl $TAPE_SIZE, %edx
-    jle BEGIN
+    jl BEGIN
     xorl %edx, %edx
     jmp BEGIN
 pdec:
     decl %edx
-    cmp $-1, %edx
-    jg BEGIN
+    test %edx, %edx
+    jns BEGIN
     movl $TAPE_SIZE, %edx
+    decl %edx
     jmp BEGIN
 
 output:
@@ -195,11 +196,6 @@ output:
     leal tape(%edx), %eax
     pushl $1
     pushl %eax
-    pushl $STDOUT
-    call write_descriptor
-    addl $12, %esp
-    pushl $1
-    pushl $NL
     pushl $STDOUT
     call write_descriptor
     addl $12, %esp
@@ -250,9 +246,8 @@ check_left:
     jmp brac2
 
 brac1:
-    cmpb $0, %al #termination before closing bracket
-    je  match_error
-    jmp brac2
+    test %al, %al #termination before closing bracket
+    jnz  brac2
 
 match_error:   
     pushl $ERR_SIZE #Error: don't care about saving register
@@ -269,13 +264,13 @@ brac2:
     jmp find_right_brac
 
 brac_right:
-    cmpl $0, %esi
-    je match_error
+    test %esi, %esi
+    jz match_error
     decl %esi
 
     movb tape(%edx), %al
-    cmpb $0,  %al
-    jne skip_back
+    test %al, %al
+    jnz skip_back
     popl %eax #throwaway the current ip on stack if zero
     jmp BEGIN
 skip_back:

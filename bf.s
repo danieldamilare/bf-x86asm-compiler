@@ -1,6 +1,6 @@
 # a brainfuck interpreter
 .section .bss
-.equ BUFFER_SIZE, 1024
+.equ BUFFER_SIZE, 2048
 .lcomm BUFFER_DATA, BUFFER_SIZE
 .equ TAPE_SIZE, 30000
 .lcomm tape, 30000
@@ -8,7 +8,10 @@
 .section .data
 PROMPT: .asciz ":> "
 ERR: .asciz "\033[31mMissing parenthesis match\n\033[0m"
-ERR_SIZE: .byte 42
+ERR2: .asciz "\033[31mInvalid source file\n\033[0m"
+.equ ERR2_SIZE, 30 
+.equ ERR_SIZE, 36 
+NL: .asciz "\n"
 
 .section .text
 .globl _start
@@ -45,7 +48,7 @@ read_descriptor:
     .equ DESC, 8
     .equ BUF, 12
     .equ SIZ, 16
-    pushl %ebx
+    pushl %ebp
     movl %esp, %ebp
 
     movl $SYS_READ, %eax
@@ -79,20 +82,22 @@ read_file:
     push %eax
     call read_descriptor
     addl $12, %esp
+    pushl %eax
     # todo: check for error
     movl IDX(%ebp), %ebx
     movl $SYS_CLOSE, %eax
     int $0x80
-    
+
+    popl %eax
     movl %ebp, %esp
     popl  %ebp
     ret
 
 _start:
-    .equ FILE, 4 
     popl %ecx
     cmpl $1, %ecx  #no file passed
     je REPL
+    popl %eax
     popl %eax
     #read file
     pushl $BUFFER_SIZE
@@ -100,8 +105,17 @@ _start:
     pushl %eax
     call read_file
     addl $12, %esp
-
+    cmpl $0, %eax
+    jl FILE_ERROR
     call interpret
+    jmp exit_prog
+
+FILE_ERROR:
+    pushl $ERR2_SIZE
+    pushl $ERR2
+    pushl $STDERR
+    call write_descriptor
+    jmp exit_prog
 
 REPL:
     pushl $3
@@ -114,8 +128,10 @@ REPL:
     pushl $BUFFER_DATA
     pushl $STDIN
     call read_descriptor
-
-    jmp interpret
+    test %eax, %eax
+    jz exit_prog
+    call interpret
+    jmp REPL
 
 # todo: interpret
 interpret:
@@ -128,8 +144,8 @@ interpret:
 
 BEGIN:
     movb BUFFER_DATA(%ecx), %al
-    cmpb $0, %al
-    je exit_prog
+    test %al, %al
+    jz exit_interpret
 
     incl %ecx
 
@@ -161,21 +177,34 @@ vdec:
 
 pinc:
     incl %edx
+    cmpl $TAPE_SIZE, %edx
+    jle BEGIN
+    xorl %edx, %edx
     jmp BEGIN
 pdec:
     decl %edx
+    cmp $-1, %edx
+    jg BEGIN
+    movl $TAPE_SIZE, %edx
     jmp BEGIN
 
 output:
     pushl %ecx
     pushl %edx
+    pushl %esi
     leal tape(%edx), %eax
     pushl $1
     pushl %eax
     pushl $STDOUT
     call write_descriptor
     addl $12, %esp
+    pushl $1
+    pushl $NL
+    pushl $STDOUT
+    call write_descriptor
+    addl $12, %esp
 
+    popl %esi
     popl %edx
     popl %ecx
     jmp BEGIN
@@ -184,12 +213,14 @@ input:
     leal tape(%edx), %eax;
     pushl %ecx
     pushl %edx
+    pushl %esi
     pushl $1
     pushl %eax
     pushl $STDIN
     call read_descriptor
     addl $12, %esp
 
+    popl %esi
     popl %edx
     popl %ecx
     jmp BEGIN
@@ -251,6 +282,12 @@ skip_back:
     popl %ecx
     jmp BEGIN
 
+exit_interpret:
+    movl %ebp, %esp
+    popl %ebp
+    ret
+
 exit_prog:
     movl $1, %eax
+    xorl %ebx, %ebx
     int $0x80

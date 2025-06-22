@@ -4,6 +4,7 @@
 .lcomm BUFFER_DATA, BUFFER_SIZE
 .equ TAPE_SIZE, 30000
 .lcomm tape, 30000
+.lcomm temp, 2
 
 .section .data
 PROMPT: .asciz ":> "
@@ -24,6 +25,27 @@ NL: .asciz "\n"
 .equ SYS_READ, 3
 .equ SYS_OPEN, 5
 .equ SYS_CLOSE, 6
+
+flush_stdin:
+    pushl %ebp
+    movl %esp, %ebp
+flush_start:
+    movl $SYS_READ, %eax
+    movl $STDIN, %ebx
+    movl $temp, %ecx
+    movl $1, %edx
+    int $0x80
+    test %eax, %eax
+    jz flush_done
+
+    movb temp, %bl
+    cmpb $'\n', %bl
+    jz flush_done
+    jmp flush_start
+
+flush_done:
+    leave
+    ret
 
 # write_descriptor(int desc, char * word, int siz)
 write_descriptor:
@@ -185,8 +207,7 @@ pdec:
     decl %edx
     test %edx, %edx
     jns BEGIN
-    movl $TAPE_SIZE, %edx
-    decl %edx
+    movl $(TAPE_SIZE -1), %edx
     jmp BEGIN
 
 output:
@@ -215,6 +236,7 @@ input:
     pushl $STDIN
     call read_descriptor
     addl $12, %esp
+    call flush_stdin
 
     popl %esi
     popl %edx

@@ -7,9 +7,9 @@ BIN = bf
 all: $(BIN)
 
 $(BIN): $(OBJ)
-	$(LD) $< -o $@
+	$(LD) $^ -o $@
 %.o: %.s
-	$(AS) $< -o $@
+	$(AS) $^ -o $@
 
 clean:
 	rm -f *.o $(OBJ) $(BIN)

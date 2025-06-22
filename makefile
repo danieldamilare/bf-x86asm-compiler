@@ -1,6 +1,6 @@
 AS = as --32 -g
 LD = ld -m elf_i386 
-SRC = $(wildcard *.s)
+SRC = $(wildcard src/*.s)
 OBJ = $(SRC:.s=.o)
 BIN = bf
 

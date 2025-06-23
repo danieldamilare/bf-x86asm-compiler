@@ -1,10 +1,13 @@
 # a brainfuck interpreter
 .section .bss
-.equ BUFFER_SIZE, 50000
+.equ BUFFER_SIZE, 65556
 .lcomm BUFFER_DATA, BUFFER_SIZE
 .equ TAPE_SIZE, 30000
 .lcomm tape, 30000
 .lcomm temp, 2
+
+.lcomm Ops, BUFFER_SIZE
+.lcomm arg, BUFFER_SIZE
 
 .section .rodata
 PROMPT: .asciz ":> "
@@ -14,6 +17,30 @@ MODE: .asciz "r"
 .equ ERR2_SIZE, 30 
 .equ ERR_SIZE, 36 
 NL: .asciz "\n"
+
+jmp_table:
+    .rept 43
+    .long BEGIN #skip
+    .endr
+    .long  vinc
+    .long  input
+    .long  vdec
+    .long  output
+    .rept 13
+    .long BEGIN #skip
+    .endr
+    .long pdec
+    .long pdec
+    .long pinc
+    .rept 28
+    .long BEGIN #skip
+    .endr
+    .long brac_left
+    .long BEGIN 
+    .long brac_right
+    .rept 34
+    .long BEGIN
+    .endr
 
 .section .text
 .globl _start
@@ -26,21 +53,6 @@ NL: .asciz "\n"
 .equ SYS_READ, 3
 .equ SYS_OPEN, 5
 .equ SYS_CLOSE, 6
-
-flush_stdin:
-    pushl %ebp
-    movl %esp, %ebp
-flush_start:
-    call getchar
-    cmpb $'\n', %al
-    je flush_done
-    test %al, %al
-    jz flush_done
-    jmp flush_start
-
-flush_done:
-    leave
-    ret
 
 _start:
     popl %ecx
@@ -56,13 +68,15 @@ _start:
     addl $8, %esp
     test %eax, %eax
     jz FILE_ERROR
-
     pushl %eax
     pushl $BUFFER_SIZE
     pushl $1
     pushl $BUFFER_DATA
     call fread
-    addl $16, %esp
+    addl $12, %esp
+    call fclose
+    add $4, %esp
+
     call interpret
     jmp exit_prog
 
@@ -89,37 +103,24 @@ REPL:
 # todo: interpret
 interpret:
 #ecx -> ip, edx -> dp, esi -> bracket depth, edi -> tape
-    pushl %ebp
-    movl %esp, %ebp
+    call preprocess
     xorl %ecx, %ecx
     xorl %edx, %edx
     xorl %esi, %esi
     movl $tape, %edi
+    movl $BUFFER_DATA, %ebp
 
 BEGIN:
-    movb BUFFER_DATA(%ecx), %al
+    movb (%ebp, %ecx, 1), %al
     test %al, %al
     jz exit_interpret
 
     incl %ecx
-
-    cmpb $'+', %al
-    je vinc #byte manipulation
-    cmpb $'-', %al
-    je  vdec
-    cmpb $'>', %al
-    je pinc# dp_manipulation
-    cmpb $'<', %al
-    je  pdec
-    cmpb $'.', %al
-    je output
-    cmpb $',', %al
-    je input
-    cmpb $'[', %al
-    je brac_left
-    cmpb $']', %al
-    je brac_right
-    jmp BEGIN
+    
+    movzbl %al, %eax
+    cmpl $127, %eax
+    ja BEGIN
+    jmp *jmp_table(, %eax, 4)
 
 vinc:
     incb (%edi, %edx, 1)
@@ -143,11 +144,9 @@ pdec:
     jmp BEGIN
 
 output:
-    subl $16, %esp
+    subl $8, %esp
     movl %ecx, 0(%esp)
     movl %edx, 4(%esp)
-    movl %esi, 8(%esp)
-    movl %edi, 12(%esp)
     xorl %eax, %eax
     movb (%edi, %edx, 1), %al
     pushl %eax
@@ -156,27 +155,26 @@ output:
 
     movl 0(%esp), %ecx
     movl 4(%esp), %edx
-    movl 8(%esp), %esi
-    movl 12(%esp), %edi
-    add $16, %esp
+    add $8, %esp
     jmp BEGIN
 
 input:
-    subl $16, %esp
+    subl $8, %esp
     movl %ecx, 0(%esp)
     movl %edx, 4(%esp)
-    movl %esi, 8(%esp)
-    movl %edi, 12(%esp)
 
     call getchar
     movb %al, (%edi, %edx, 1)
-    call flush_stdin
-
+flush:
+    call  getchar
+    test %al, %al
+    jz flush_done
+    cmpb $'\n', %al
+    jnz flush
+flush_done:
     movl 0(%esp), %ecx
     movl 4(%esp), %edx
-    movl 8(%esp), %esi
-    movl 12(%esp), %edi
-    add $16, %esp
+    add $8, %esp
     jmp BEGIN
 
 brac_left:
@@ -191,7 +189,7 @@ skip:
     movl $1,  %ebx # use ebx for bracket counter
 
 find_right_brac:
-    movb BUFFER_DATA(%ecx), %al
+    movb (%ebp, %ecx, 1), %al
     cmpb $']', %al
     jne  check_left
     decl %ebx
@@ -236,11 +234,53 @@ skip_back:
     jmp BEGIN
 
 exit_interpret:
+    ret
+
+preprocess:
+    pushl %ebp
+    movl %esp, %ebp
+    # esi as pointer, ebx as memory
+    leal BUFFER_DATA, %ebx
+    xorl %esi, %esi
+
+preprocess_start:
+    #read in characters
+    # skip characters that are not command
+    movb (%ebx, %esi, 1), %al
+    movzbl %al, %eax
+    incl %esi
+    cmpb $127, %al
+    jg preprocess_start
+    movl jmp_table(,%eax, 1), ecx
+    cmpl $BEGIN, %ecx
+    je preprocess_start
+
+    cmpb $'+', %al
+    je inc_acc
+    cmpb $'-', %al
+    je inc_acc
+
+    cmpb $'>', %al
+    je ptr_acc
+    cmpb $'<', %al
+    je ptr_acc
+
+    cmpb $'[', %al
+    je left_acc
+    cmpb $']', %brac
+    je right_acc
+    jmp repeat
+
+preprocess_exit:
     movl %ebp, %esp
     popl %ebp
     ret
 
+
 exit_prog:
+    pushl stdout
+    call fflush
+    add $4, %esp
     movl $1, %eax
     xorl %ebx, %ebx
     int $0x80

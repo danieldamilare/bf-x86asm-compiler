@@ -6,10 +6,11 @@
 .lcomm tape, 30000
 .lcomm temp, 2
 
-.section .data
+.section .rodata
 PROMPT: .asciz ":> "
 ERR: .asciz "\033[31mMissing parenthesis match\n\033[0m"
 ERR2: .asciz "\033[31mInvalid source file\n\033[0m"
+MODE: .asciz "r"
 .equ ERR2_SIZE, 30 
 .equ ERR_SIZE, 36 
 NL: .asciz "\n"
@@ -30,89 +31,15 @@ flush_stdin:
     pushl %ebp
     movl %esp, %ebp
 flush_start:
-    movl $SYS_READ, %eax
-    movl $STDIN, %ebx
-    movl $temp, %ecx
-    movl $1, %edx
-    int $0x80
-    test %eax, %eax
-    jz flush_done
-
-    movb temp, %bl
-    cmpb $'\n', %bl
+    call getchar
+    cmpb $'\n', %al
+    je flush_done
+    test %al, %al
     jz flush_done
     jmp flush_start
 
 flush_done:
     leave
-    ret
-
-# write_descriptor(int desc, char * word, int siz)
-write_descriptor:
-    .equ SIZ, 16
-    .equ WORD, 12
-    .equ DESC, 8
-    pushl %ebp
-    movl %esp, %ebp
-
-    movl $SYS_WRITE, %eax
-    movl DESC(%ebp), %ebx
-    movl WORD(%ebp), %ecx
-    movl SIZ(%ebp), %edx
-
-    int $0x80
-    movl %ebp, %esp
-    popl %ebp
-    ret
-
-# read_descriptor(int desc, char * buf, int siz)
-read_descriptor:
-    .equ DESC, 8
-    .equ BUF, 12
-    .equ SIZ, 16
-    pushl %ebp
-    movl %esp, %ebp
-
-    movl $SYS_READ, %eax
-    movl DESC(%ebp), %ebx
-    movl BUF(%ebp), %ecx
-    movl SIZ(%ebp), %edx
-    int $0x80
-    leave
-    ret
-
-# read_file(char * filename, char * buffer, int siz)
-read_file:
-    .equ FILENAME, 8
-    .equ BUF, 12
-    .equ SIZ, 16
-    .equ IDX, -4;
-    pushl %ebp
-    movl %esp, %ebp
-    subl $8, %esp
-    # open file
-    movl $SYS_OPEN, %eax
-    movl FILENAME(%ebp), %ebx
-    movl $0, %ecx
-    movl $0, %edx
-    int $0x80
-    movl %eax, IDX(%ebp)
-    #to do check for error
-
-    pushl SIZ(%ebp)
-    pushl BUF(%ebp)
-    push %eax
-    call read_descriptor
-    addl $12, %esp
-    pushl %eax
-    # todo: check for error
-    movl IDX(%ebp), %ebx
-    movl $SYS_CLOSE, %eax
-    int $0x80
-
-    popl %eax
-    movl %ebp, %esp
-    popl  %ebp
     ret
 
 _start:
@@ -121,35 +48,39 @@ _start:
     je REPL
     popl %eax
     popl %eax
+    and $-16, %esp
     #read file
-    pushl $BUFFER_SIZE
-    pushl $BUFFER_DATA
+    pushl $MODE
     pushl %eax
-    call read_file
-    addl $12, %esp
-    cmpl $0, %eax
-    jl FILE_ERROR
+    call fopen
+    addl $8, %esp
+    test %eax, %eax
+    jz FILE_ERROR
+
+    pushl %eax
+    pushl $BUFFER_SIZE
+    pushl $1
+    pushl $BUFFER_DATA
+    call fread
+    addl $16, %esp
     call interpret
     jmp exit_prog
 
 FILE_ERROR:
-    pushl $ERR2_SIZE
     pushl $ERR2
-    pushl $STDERR
-    call write_descriptor
+    pushl stderr
+    call fprintf
+    add $8, %esp
     jmp exit_prog
 
 REPL:
-    pushl $3
     pushl $PROMPT
-    pushl $STDOUT
-    call write_descriptor
-    addl $12, %esp
-
+    call printf
+    pushl stdin
     pushl $BUFFER_SIZE
     pushl $BUFFER_DATA
-    pushl $STDIN
-    call read_descriptor
+    call fgets
+    addl $12, %esp
     test %eax, %eax
     jz exit_prog
     call interpret
@@ -157,12 +88,13 @@ REPL:
 
 # todo: interpret
 interpret:
-#ecx -> ip, edx -> dp, esi -> bracket depth
+#ecx -> ip, edx -> dp, esi -> bracket depth, edi -> tape
     pushl %ebp
     movl %esp, %ebp
     xorl %ecx, %ecx
     xorl %edx, %edx
     xorl %esi, %esi
+    movl $tape, %edi
 
 BEGIN:
     movb BUFFER_DATA(%ecx), %al
@@ -190,11 +122,11 @@ BEGIN:
     jmp BEGIN
 
 vinc:
-    incb tape(%edx)
+    incb (%edi, %edx, 1)
     jmp BEGIN
 
 vdec:
-    decb tape(%edx)
+    decb (%edi, %edx, 1)
     jmp BEGIN
 
 pinc:
@@ -211,40 +143,44 @@ pdec:
     jmp BEGIN
 
 output:
-    pushl %ecx
-    pushl %edx
-    pushl %esi
-    leal tape(%edx), %eax
-    pushl $1
+    subl $16, %esp
+    movl %ecx, 0(%esp)
+    movl %edx, 4(%esp)
+    movl %esi, 8(%esp)
+    movl %edi, 12(%esp)
+    xorl %eax, %eax
+    movb (%edi, %edx, 1), %al
     pushl %eax
-    pushl $STDOUT
-    call write_descriptor
-    addl $12, %esp
+    call putchar
+    addl $4, %esp
 
-    popl %esi
-    popl %edx
-    popl %ecx
+    movl 0(%esp), %ecx
+    movl 4(%esp), %edx
+    movl 8(%esp), %esi
+    movl 12(%esp), %edi
+    add $16, %esp
     jmp BEGIN
 
 input:
-    leal tape(%edx), %eax;
-    pushl %ecx
-    pushl %edx
-    pushl %esi
-    pushl $1
-    pushl %eax
-    pushl $STDIN
-    call read_descriptor
-    addl $12, %esp
+    subl $16, %esp
+    movl %ecx, 0(%esp)
+    movl %edx, 4(%esp)
+    movl %esi, 8(%esp)
+    movl %edi, 12(%esp)
+
+    call getchar
+    movb %al, (%edi, %edx, 1)
     call flush_stdin
 
-    popl %esi
-    popl %edx
-    popl %ecx
+    movl 0(%esp), %ecx
+    movl 4(%esp), %edx
+    movl 8(%esp), %esi
+    movl 12(%esp), %edi
+    add $16, %esp
     jmp BEGIN
 
 brac_left:
-    cmpb $0, tape(%edx)
+    cmpb $0, (%edi, %edx, 1)
     je  skip
     movl %ecx, %eax
     decl %eax
@@ -272,10 +208,10 @@ brac1:
     jnz  brac2
 
 match_error:   
-    pushl $ERR_SIZE #Error: don't care about saving register
     pushl $ERR
-    pushl $STDERR
-    call write_descriptor
+    pushl stderr
+    call fprintf
+    addl $8, %esp
     jmp exit_interpret
 
 brac2:
@@ -290,7 +226,7 @@ brac_right:
     jz match_error
     decl %esi
 
-    movb tape(%edx), %al
+    movb (%edi, %edx, 1), %al
     test %al, %al
     jnz skip_back
     popl %eax #throwaway the current ip on stack if zero

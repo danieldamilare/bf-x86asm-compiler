@@ -7,7 +7,7 @@
 .lcomm temp, 2
 
 .lcomm Ops, BUFFER_SIZE
-.lcomm arg, BUFFER_SIZE
+.lcomm arg, BUFFER_SIZE * 4
 
 .section .rodata
 PROMPT: .asciz ":> "
@@ -19,7 +19,8 @@ MODE: .asciz "r"
 NL: .asciz "\n"
 
 jmp_table:
-    .rept 43
+    .long exit_interpret
+    .rept 42
     .long BEGIN #skip
     .endr
     .long  vinc
@@ -53,6 +54,13 @@ jmp_table:
 .equ SYS_READ, 3
 .equ SYS_OPEN, 5
 .equ SYS_CLOSE, 6
+
+.equ INC_PTR, $'>'
+.EQU DEC_PTR, $'<'
+.EQU DEC_DATA, $'-'
+.EQU INC_DATA, $'+'
+.EQU JZERO, $'['
+.EQU JNZERO, $']'
 
 _start:
     popl %ecx
@@ -88,6 +96,8 @@ FILE_ERROR:
     jmp exit_prog
 
 REPL:
+    pushl stdout
+    call fflush
     pushl $PROMPT
     call printf
     pushl stdin
@@ -104,59 +114,66 @@ REPL:
 interpret:
 #ecx -> ip, edx -> dp, esi -> bracket depth, edi -> tape
     call preprocess
+    cmpl $-1, %eax
+    je match_error
     xorl %ecx, %ecx
     xorl %edx, %edx
     xorl %esi, %esi
     movl $tape, %edi
-    movl $BUFFER_DATA, %ebp
+    movl $Ops, %ebp
 
 BEGIN:
     movb (%ebp, %ecx, 1), %al
-    test %al, %al
-    jz exit_interpret
-
+    movl %ecx, %ebx
     incl %ecx
-    
     movzbl %al, %eax
-    cmpl $127, %eax
-    ja BEGIN
     jmp *jmp_table(, %eax, 4)
 
 vinc:
-    incb (%edi, %edx, 1)
+    movl arg(, %ebx, 4), %eax
+    addb %al, (%edi, %edx, 1)
     jmp BEGIN
 
 vdec:
-    decb (%edi, %edx, 1)
+    movl arg(, %ebx, 4), %eax
+    subb %al, (%edi, %edx, 1)
     jmp BEGIN
 
 pinc:
-    incl %edx
+    addl arg(, %ebx, 4), %edx
     cmpl $TAPE_SIZE, %edx
     jl BEGIN
-    xorl %edx, %edx
+    subl $TAPE_SIZE, %edx
     jmp BEGIN
+
 pdec:
-    decl %edx
-    test %edx, %edx
+    subl arg(, %ebx, 4), %edx
     jns BEGIN
-    movl $(TAPE_SIZE -1), %edx
+    addl $TAPE_SIZE, %edx
     jmp BEGIN
 
 output:
     subl $8, %esp
     movl %ecx, 0(%esp)
     movl %edx, 4(%esp)
+    movl arg(, %ebx, 4), %ebx
+
+output_loop:
+    test %ebx, %ebx
+    je end_output
+    decl %ebx
     xorl %eax, %eax
     movb (%edi, %edx, 1), %al
     pushl %eax
     call putchar
     addl $4, %esp
-
+    jmp output_loop
+end_output:
     movl 0(%esp), %ecx
     movl 4(%esp), %edx
     add $8, %esp
     jmp BEGIN
+
 
 input:
     subl $8, %esp
@@ -180,30 +197,10 @@ flush_done:
 brac_left:
     cmpb $0, (%edi, %edx, 1)
     je  skip
-    movl %ecx, %eax
-    decl %eax
-    pushl %eax
-    incl %esi
     jmp BEGIN
 skip:
-    movl $1,  %ebx # use ebx for bracket counter
-
-find_right_brac:
-    movb (%ebp, %ecx, 1), %al
-    cmpb $']', %al
-    jne  check_left
-    decl %ebx
-    jmp brac2
-
-check_left:
-    cmpb $'[', %al
-    jne brac1
-    incl %ebx
-    jmp brac2
-
-brac1:
-    test %al, %al #termination before closing bracket
-    jnz  brac2
+    movl arg(, %ebx, 4), %ecx
+    jmp BEGIN
 
 match_error:   
     pushl $ERR
@@ -212,25 +209,10 @@ match_error:
     addl $8, %esp
     jmp exit_interpret
 
-brac2:
-    incl %ecx #move instruction pointer
-    cmpl $0, %ebx #finish matching?
-    je BEGIN
-    jl match_error
-    jmp find_right_brac
-
 brac_right:
-    test %esi, %esi
-    jz match_error
-    decl %esi
-
     movb (%edi, %edx, 1), %al
     test %al, %al
-    jnz skip_back
-    popl %eax #throwaway the current ip on stack if zero
-    jmp BEGIN
-skip_back:
-    popl %ecx
+    jnz skip
     jmp BEGIN
 
 exit_interpret:
@@ -239,9 +221,12 @@ exit_interpret:
 preprocess:
     pushl %ebp
     movl %esp, %ebp
-    # esi as pointer, ebx as memory
+    subl $16, %esp
+    movl $0, -4(%ebp)
+    # esi as pointer, ebx as memory pointer, edi as pointer to ops and arg
     leal BUFFER_DATA, %ebx
     xorl %esi, %esi
+    xorl %edi, %edi
 
 preprocess_start:
     #read in characters
@@ -249,33 +234,66 @@ preprocess_start:
     movb (%ebx, %esi, 1), %al
     movzbl %al, %eax
     incl %esi
+    testb %al, %al
+    je preprocess_exit
     cmpb $127, %al
     jg preprocess_start
-    movl jmp_table(,%eax, 1), ecx
+    movl jmp_table(,%eax, 4), %ecx
     cmpl $BEGIN, %ecx
     je preprocess_start
 
-    cmpb $'+', %al
-    je inc_acc
-    cmpb $'-', %al
-    je inc_acc
-
-    cmpb $'>', %al
-    je ptr_acc
-    cmpb $'<', %al
-    je ptr_acc
-
     cmpb $'[', %al
     je left_acc
-    cmpb $']', %brac
+    cmpb $']', %al
     je right_acc
     jmp repeat
 
+
+left_acc:
+    incl -4(%ebp);
+    pushl %edi
+    movb %al, Ops(, %edi, 1)
+    incl %edi
+    jmp preprocess_start
+
+right_acc:
+    cmpl $0, -4(%ebp)
+    je preprocess_error_exit
+    popl %ecx
+    decl -4(%ebp)
+    movb %al, Ops(, %edi, 1)
+    movl %ecx, arg(, %edi, 4) #jmp to instruction before matchin
+    incl arg(, %edi, 4)
+    incl %edi
+    movl %edi, arg(, %ecx, 4) #jump to instruction  after matching right bracket
+    jmp preprocess_start
+
+repeat:
+    xorl %ecx, %ecx
+start_repeat:
+    cmpb (%ebx, %esi, 1), %al
+    jne end_repeat
+    incl %ecx
+    incl %esi
+    jmp start_repeat
+end_repeat:
+    leal 1(%ecx), %ecx #increment by 1
+    movb %al, Ops(,%edi, 1)
+    movl %ecx, arg(,%edi, 4)
+    incl %edi
+    jmp preprocess_start
+
+preprocess_error_exit:
+    movl $-1, %eax
+    jmp pexit
+
 preprocess_exit:
+    xorl %eax, %eax
+    movb $0, Ops(, %edi, 1)
+pexit:
     movl %ebp, %esp
     popl %ebp
     ret
-
 
 exit_prog:
     pushl stdout

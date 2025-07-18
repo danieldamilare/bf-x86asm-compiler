@@ -153,25 +153,23 @@ pdec:
     jmp BEGIN
 
 output:
-    subl $8, %esp
-    movl %ecx, 0(%esp)
-    movl %edx, 4(%esp)
+    pushl %ecx
     movl arg(, %ebx, 4), %ebx
+    movl %edx, %esi
 
 output_loop:
     test %ebx, %ebx
     je end_output
     decl %ebx
     xorl %eax, %eax
-    movb (%edi, %edx, 1), %al
+    movb (%edi, %esi, 1), %al
     pushl %eax
     call putchar
     addl $4, %esp
     jmp output_loop
 end_output:
-    movl 0(%esp), %ecx
-    movl 4(%esp), %edx
-    add $8, %esp
+    popl %ecx
+    movl %esi, %edx
     jmp BEGIN
 
 

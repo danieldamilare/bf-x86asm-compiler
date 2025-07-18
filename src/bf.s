@@ -110,6 +110,13 @@ REPL:
     call interpret
     jmp REPL
 
+.macro DISPATCH
+    movzx (%ebp, %ecx, 1), %eax
+    movl %ecx, %ebx
+    incl %ecx
+    jmp *jmp_table(, %eax, 4)
+.endm
+
 # todo: interpret
 interpret:
 #ecx -> ip, edx -> dp, esi -> bracket depth, edi -> tape
@@ -123,34 +130,33 @@ interpret:
     movl $Ops, %ebp
 
 BEGIN:
-    movb (%ebp, %ecx, 1), %al
+    movzx (%ebp, %ecx, 1), %eax
     movl %ecx, %ebx
     incl %ecx
-    movzbl %al, %eax
     jmp *jmp_table(, %eax, 4)
 
 vinc:
     movl arg(, %ebx, 4), %eax
     addb %al, (%edi, %edx, 1)
-    jmp BEGIN
+    DISPATCH
 
 vdec:
     movl arg(, %ebx, 4), %eax
     subb %al, (%edi, %edx, 1)
-    jmp BEGIN
+    DISPATCH
 
 pinc:
     addl arg(, %ebx, 4), %edx
     cmpl $TAPE_SIZE, %edx
     jl BEGIN
     subl $TAPE_SIZE, %edx
-    jmp BEGIN
+    DISPATCH
 
 pdec:
     subl arg(, %ebx, 4), %edx
     jns BEGIN
     addl $TAPE_SIZE, %edx
-    jmp BEGIN
+    DISPATCH
 
 output:
     pushl %ecx
@@ -170,7 +176,7 @@ output_loop:
 end_output:
     popl %ecx
     movl %esi, %edx
-    jmp BEGIN
+    DISPATCH
 
 
 input:
@@ -190,15 +196,15 @@ flush_done:
     movl 0(%esp), %ecx
     movl 4(%esp), %edx
     add $8, %esp
-    jmp BEGIN
+    DISPATCH
 
 brac_left:
     cmpb $0, (%edi, %edx, 1)
     je  skip
-    jmp BEGIN
+    DISPATCH
 skip:
     movl arg(, %ebx, 4), %ecx
-    jmp BEGIN
+    DISPATCH
 
 match_error:   
     pushl $ERR
@@ -211,7 +217,7 @@ brac_right:
     movb (%edi, %edx, 1), %al
     test %al, %al
     jnz skip
-    jmp BEGIN
+    DISPATCH
 
 exit_interpret:
     ret

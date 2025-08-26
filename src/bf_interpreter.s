@@ -30,7 +30,7 @@ jmp_table:
     .long BEGIN #skip
     .endr
     .long pdec
-    .long pdec
+    .long BEGIN
     .long pinc
     .rept 28
     .long BEGIN #skip
@@ -234,8 +234,7 @@ preprocess:
 preprocess_start:
     #read in characters
     # skip characters that are not command
-    movb (%ebx, %esi, 1), %al
-    movzbl %al, %eax
+    movzx (%ebx, %esi, 1), %eax
     incl %esi
     testb %al, %al
     je preprocess_exit

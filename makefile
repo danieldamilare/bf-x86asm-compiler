@@ -1,7 +1,7 @@
 AS = as --32 -g
 LD = ld -m elf_i386 
 LDOPT = -lc -dynamic-linker /lib/ld-linux.so.2
-SRC = $(wildcard src/*.s)
+SRC = src/bf_compiler.s
 OBJ = $(SRC:.s=.o)
 BIN = bf
 

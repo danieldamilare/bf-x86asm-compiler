@@ -170,7 +170,7 @@ compile:
     movl $tape, %edi
     movl $Ops, %ebp
     movl $elf_code, %esi
-    addl $5, %esi #skip beginning of els, patch later with mov $TAPE, (%edi)
+    addl $5, %esi #skip beginning of elf, patch later with mov $TAPE, (%edi)
 
 BEGIN:
     movzx (%ebp, %ecx, 1), %eax
@@ -240,8 +240,7 @@ end_output:
     movl %esi, %edx
     popl %esi
     popl %ecx
-    DISPATCH
-
+    jmp BEGIN
 
 input:
     subl $8, %esp
@@ -254,10 +253,10 @@ input:
 brac_left:
     cmpb $0, (%edi, %edx, 1)
     je  skip
-    DISPATCH
+    jmp BEGIN
 skip:
     movl arg(, %ebx, 4), %ecx
-    DISPATCH
+    jmp BEGIN
 
 match_error:   
     pushl $ERR
@@ -270,7 +269,7 @@ brac_right:
     movb (%edi, %edx, 1), %al
     test %al, %al
     jnz skip
-    DISPATCH
+    jmp BEGIN
 
 exit_interpret:
     ret
@@ -288,8 +287,7 @@ preprocess:
 preprocess_start:
     #read in characters
     # skip characters that are not command
-    movb (%ebx, %esi, 1), %al
-    movzbl %al, %eax
+    movzx (%ebx, %esi, 1), %eax
     incl %esi
     testb %al, %al
     je preprocess_exit

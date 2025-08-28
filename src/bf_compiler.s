@@ -8,10 +8,9 @@
 .lcomm Ops, BUFFER_SIZE
 .lcomm arg, BUFFER_SIZE * 4
 .lcomm elf_code, 256000
-
+.lcomm code_size, 4
 
 .section .rodata
-
 PROMPT: .asciz ":> "
 ERR: .asciz "\033[31mMissing parenthesis match\n\033[0m"
 ERR2: .asciz "\033[31mInvalid source file\n\033[0m"
@@ -19,7 +18,6 @@ filename: .asciz "a.out"
 
 MODER: .asciz "r"
 MODEW: .asciz "w"
-
 
 NL: .asciz "\n"
 .equ START_ADDR, 0x80480000
@@ -49,6 +47,15 @@ jmp_table:
     .long BEGIN
     .endr
 
+input_code: .byte 0xb8, 0x03, 0x00, 0x00, 0x00 # mov, $0x03, %eax
+       .byte 0x31, 0xdb                   # xor %ebx, %ebx
+       .byte 0x89, 0xf9                   # mov %edi, %ecx
+       .byte 0x31, 0xd2                   # xor %edx, %edx
+       .byte 0x42                         #inc %edx
+       .byte 0xcd, 0x80                   #int $0x80
+.equ input_size, . - input_code
+
+.section .data
 ehdr:
     .byte 0x7f, 'E', 'L', 'F'           # e_indent
     .byte 0x01, 0x01, 0x01, 0x00        # e_idnet
@@ -81,14 +88,6 @@ phdr:
     .long 0x1000        # p_align not sure what it should be
 
 .equ phdr_size, . - phdr
-input: .byte 0xb8, 0x03, 0x00, 0x00, 0x00 # mov, $0x03, %eax
-       .byte 0x31, 0xdb                   # xor %ebx, %ebx
-       .byte 0x89, 0xf9                   # mov %edi, %ecx
-       .byte 0x31, 0xd2                   # xor %edx, %edx
-       .byte 0x42                         #inc %edx
-       .byte 0xcd, 0x80                   #int $0x80
-.equ input_size, . - input
-
 
 .section .text
 .globl _start
@@ -115,15 +114,6 @@ input: .byte 0xb8, 0x03, 0x00, 0x00, 0x00 # mov, $0x03, %eax
 .EQU INC_DATA, $'+'
 .EQU JZERO, $'['
 .EQU JNZERO, $']'
-
-
-.macro DISPATCH
-    movzx (%ebp, %ecx, 1), %eax
-    movl %ecx, %ebx
-    incl %ecx
-    jmp *jmp_table(, %eax, 4)
-.endm
-
 
 _start:
     popl %ecx
@@ -158,7 +148,7 @@ FILE_ERROR:
     add $8, %esp
     jmp exit_prog
 
-# todo: interpret
+
 compile:
 #ecx -> ip, edx -> dp,  edi -> tape %esi -> pointer to elf buffer
     call preprocess
@@ -166,8 +156,6 @@ compile:
     je match_error
     xorl %ecx, %ecx
     xorl %edx, %edx
-    xorl %esi, %esi
-    movl $tape, %edi
     movl $Ops, %ebp
     movl $elf_code, %esi
     addl $5, %esi #skip beginning of elf, patch later with mov $TAPE, (%edi)
@@ -190,7 +178,7 @@ vinc:
 vdec:
     movl arg(, %ebx, 4), %eax
     movb $0x80, (%esi)
-    movb $0x27, 1(%esi)
+    movb $0x2f, 1(%esi)
     movb %al, 2(%esi)
     addl $3,  %esi
     jmp BEGIN
@@ -212,50 +200,48 @@ pdec:
     jmp BEGIN
 
 input:
-    subl $8, %esp
-    movl %ecx, 0(%esp)
-    movl %edx, 4(%esp)
-
-    call getchar
-    movb %al, (%edi, %edx, 1)
-
-
-output:
     pushl %ecx
-    pushl %esi
-    movl arg(, %ebx, 4), %ebx
-    movl %edx, %esi
-
-output_loop:
-    test %ebx, %ebx
-    je end_output
-    decl %ebx
-    xorl %eax, %eax
-    movb (%edi, %esi, 1), %al
-    pushl %eax
-    call putchar
-    addl $4, %esp
-    jmp output_loop
-end_output:
-    movl %esi, %edx
-    popl %esi
+    movl $input_size, %ecx
+    movl %esi, %edi
+    movl $input_code, %esi
+    rep movsb
+    movl %edi, %esi
     popl %ecx
     jmp BEGIN
 
-input:
-    subl $8, %esp
-    movl %ecx, 0(%esp)
-    movl %edx, 4(%esp)
-
-    call getchar
-    movb %al, (%edi, %edx, 1)
+output:
+    movl arg(, %ebx, 4), %eax
+    movl $0xbd46f631, (%esi)
+    movl %eax,  4(%esi)
+    movl $0x04b0c031, 8(%esi)
+    movl $0x8943db31, 12(%esi)
+    movl $0x42d231f9, 16(%esi)
+    movl $0x80cd, 20(%esi) 
+    movl $0xe87cf539, 22(%esi) #jump back -22 (0xea) 
+    addl $26, %esi
+    jmp BEGIN
 
 brac_left:
-    cmpb $0, (%edi, %edx, 1)
-    je  skip
+    movw $0x3f80, (%esi)
+    movb $00, 2(%esi)
+    movw $0x840f, 3(%esi)
+    addl $5, %esi
+    pushl %esi
+    addl $4, %esi
     jmp BEGIN
-skip:
-    movl arg(, %ebx, 4), %ecx
+    
+brac_right:
+    popl %edi
+    movw $0x3f80, (%esi)
+    movb $00, 2(%esi)
+    movw $0x850f, 3(%esi)
+    movl %edi, %eax
+    subl %esi, %eax
+    movl %eax, 5(%esi)
+    addl $9, %esi
+    movl %esi, %eax
+    subl %edi, %eax
+    movl %eax, (%edi)
     jmp BEGIN
 
 match_error:   
@@ -263,15 +249,34 @@ match_error:
     pushl stderr
     call fprintf
     addl $8, %esp
-    jmp exit_interpret
-
-brac_right:
-    movb (%edi, %edx, 1), %al
-    test %al, %al
-    jnz skip
-    jmp BEGIN
+    jmp ext_inter
 
 exit_interpret:
+# write the exit system call
+    movl $0xc031db31, (%esi)
+    movb $0x40, 4(%esi)
+    movw $0x80cd, 5(%esi)
+    addl $7, %esi
+
+#calculate file size and write to program header structure
+    movl %esi, %eax
+    subl $elf_code, %eax
+    addl $phdr_size, %eax
+    addl $ehdr_size, %eax
+    movl $phdr, %ebx
+    #write p_filesiz
+    movl %eax, 16(%ebx)
+    movl %eax, %ecx
+    movl %eax, code_size
+    addl $START_ADDR, %ecx
+    #wrtie movl $TAPE, %edi
+    movl $elf_code, %edi
+    movb $0xbf, (%edi)
+    movl %ecx, 1(%edi)
+    #write p_memsiz
+    addl $30000, %eax
+    movl %eax, 20(%ebx)
+ext_inter:
     ret
 
 preprocess:
@@ -302,7 +307,6 @@ preprocess_start:
     cmpb $']', %al
     je right_acc
     jmp repeat
-
 
 left_acc:
     incl -4(%ebp);
@@ -345,13 +349,13 @@ preprocess_error_exit:
 preprocess_exit:
     xorl %eax, %eax
     movb $0, Ops(, %edi, 1)
+
 pexit:
     movl %ebp, %esp
     popl %ebp
     ret
 
 exit_prog:
-
     pushl $0755
     pushl $(O_CREAT | O_WRONLY | O_TRUNC | O_APPEND)
     pushl $filename
@@ -373,6 +377,24 @@ exit_prog:
     pushl $phdr
     pushl %eax
     call write
+    popl %eax
+    addl $12, %esp
 
-    pushl $0
-    call exit
+    # write emitted code
+    subl $4, %esp
+    pushl code_size
+    pushl $elf_code
+    pushl %eax
+    call write
+    popl %eax
+    addl $12, %esp
+
+    #close file descriptor
+    pushl %eax
+    call close
+
+    xorl %eax, %eax
+    xorl %ebx, %ebx
+    inc %eax
+    int $0x80
+

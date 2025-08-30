@@ -2,16 +2,13 @@
 .section .bss
 .equ BUFFER_SIZE, 65556
 .lcomm BUFFER_DATA, BUFFER_SIZE
-.equ TAPE_SIZE, 30000
-.lcomm tape, 30000
 
 .lcomm Ops, BUFFER_SIZE
 .lcomm arg, BUFFER_SIZE * 4
-.lcomm elf_code, 256000
+.lcomm elf_code, 512000
 .lcomm code_size, 4
 
 .section .rodata
-PROMPT: .asciz ":> "
 ERR: .asciz "\033[31mMissing parenthesis match\n\033[0m"
 ERR2: .asciz "\033[31mInvalid source file\n\033[0m"
 filename: .asciz "a.out"
@@ -169,32 +166,28 @@ BEGIN:
 
 vinc:
     movl arg(, %ebx, 4), %eax
-    movb $0x80, (%esi)
-    movb $0x07, 1(%esi)
+    movw $0x0780, (%esi)
     movb %al, 2(%esi)
     addl $3, %esi
     jmp BEGIN
 
 vdec:
     movl arg(, %ebx, 4), %eax
-    movb $0x80, (%esi)
-    movb $0x2f, 1(%esi)
+    movw $0x2f80, (%esi)
     movb %al, 2(%esi)
     addl $3,  %esi
     jmp BEGIN
 
 pinc:
     movl arg(, %ebx, 4), %eax
-    movb $0x81, (%esi)
-    movb $0xc7, 1(%esi)
+    movw $0xc781, (%esi)
     movl %eax, 2(%esi)
     addl $6, %esi
     jmp BEGIN
 
 pdec:
     movl arg(, %ebx, 4), %eax
-    movb $0x81, (%esi)
-    movb $0xef, 1(%esi)
+    movw $0xef81, (%esi)
     movl %eax, 2(%esi)
     addl $6, %esi
     jmp BEGIN
@@ -229,18 +222,21 @@ brac_left:
     pushl %esi
     addl $4, %esi
     jmp BEGIN
-    
+   
 brac_right:
     popl %edi
     movw $0x3f80, (%esi)
     movb $00, 2(%esi)
     movw $0x850f, 3(%esi)
     movl %edi, %eax
+    addl $4, %eax #skip [ past jump offset
     subl %esi, %eax
+    subl $9, %eax # offset starts at the end of jne instruction
     movl %eax, 5(%esi)
-    addl $9, %esi
-    movl %esi, %eax
-    subl %edi, %eax
+    addl $9, %esi  #move esi buffer to the next available fed
+    movl %esi, %eax    
+    subl %edi, %eax #subtract target address from current address
+    subl $4, %eax  # the real target address is at the end of the instruction which is patch + 4
     movl %eax, (%edi)
     jmp BEGIN
 
@@ -297,7 +293,7 @@ preprocess_start:
     testb %al, %al
     je preprocess_exit
     cmpb $127, %al
-    jg preprocess_start
+    ja preprocess_start
     movl jmp_table(,%eax, 4), %ecx
     cmpl $BEGIN, %ecx
     je preprocess_start

@@ -14,24 +14,9 @@ BF-x86asm-compiler provides two implementations:
 - GNU Linker (`ld`) 
 - Standard C library (`libc`) - for interpreter build only
 - 32-bit support on 64-bit systems (install `gcc-multilib` if needed)
-
-### Interpreter (`bf_interpreter`)
-
-* Supports **REPL mode** (`./bf_interpreter`) and **file mode** (`./bf_interpreter program.bf`).
-* Optimizations:
-
-  * RLE compression for consecutive operations.
-  * Precomputed jump offsets for loops.
-  * Fast dispatch loop via jump table (equivalent to GCC’s `computed goto`).
-
 ### Compiler (`bf_compiler`)
 
 * Compiles Brainfuck to native ELF executables 
-* Features:
-  * ELF header + program header written directly.
-  * Direct Linux syscalls (`write`, `read`, `exit`).
-  * Standalone execution with no external runtime needed.
-
 ### Memory Layout (compiler-generated executables)
 
 * **Tape**: 30,000 bytes (Brainfuck standard).
